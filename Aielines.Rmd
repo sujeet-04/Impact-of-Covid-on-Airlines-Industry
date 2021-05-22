@@ -1,0 +1,328 @@
+---
+title: "Airlines"
+output:
+  html_document:
+    df_print: paged
+---
+                              ## Covid-19 Impact on Airlines Industry ##
+
+Businesses across industries all over the world are facing crisis due to the global COVID-19 pandemic and airlines industries also facing the same fate due to the pandemic.There is some improvement in last few months but how much is the impact and what time it will take to come into the previous situation, to analyze this i will use the last 10 years passenger, revenue, load and other datas, and will see there trend and behavior, for this i will use some time series plot to analyze the trend, seasonality and level of the values and in the end i will predict for the next 2 years data by using different methods like ARIMA, Additive Seasonality, Exponential Seasonality etc.  
+
+```{r}
+#Load the require library.
+
+library(readxl)
+library(fpp2)
+library(forecast)
+library(plotly)
+library(zoo)
+library(ggplot2)
+library(dplyr)
+library(hrbrthemes)
+library(dygraphs)
+library(xts)
+library(latticeExtra)
+library(TSstudio)
+library(Metrics)
+
+#Us city passenger data for both international and domestic flights.
+# Load the dataset.
+Passenger_data <- read_excel("Passengers_3_19_2021.xlsx",skip = 1) 
+# Print First 6 rows of the dataset.
+head(Passenger_data) 
+#TO check the Class pf the attributes present in the dataset.
+str(Passenger_data) 
+anyNA(Passenger_data) # True
+dim(Passenger_data) # 242 Rows 5 Columns.
+
+#Remove the rows containing total values an nul values in the end because these point's will not help me in further analysis.
+
+Passenger_data2 <- Passenger_data[-c(4,17,30,43,56,69,82,95,108,121,134,147,160,173,186,
+                                    199,212,225,238:242),]
+
+dim(Passenger_data2)
+#The new dataset has 219 rows means the 219 months data of the total passengers traveling and 5 columns. 
+
+#Now my dataset has different columns for month and year, but for making this data frame as a time series variable I need a date column which will be the combination of both these columns so, I simply paste the month and year column into a single attribute and then transform it into the date column.
+Passenger_data2$Date <- as.Date(paste(month.abb[as.numeric(Passenger_data2$Month)], "01",
+                                     Passenger_data2$Year, sep="-"),format = "%b-%d-%Y")
+
+#Next I transform my whole data into the time series to see if the trends of the international and domestic passengers are the same throughout the years or both showing different behavior.
+#Transform the whole data into time series.
+Passenger_Data_xts <- xts( x=Passenger_data2[,c(3:5)], order.by = Passenger_data2$Date)
+
+ts_plot(Passenger_Data_xts)
+cor(Passenger_data2$DOMESTIC,Passenger_data2$INTERNATIONAL)
+#By looking at the plot and correlation value I can say that both the domestic and international passenger count was highly correlated so I don't need to consider both these variables for my time series analysis if I want to do the further analysis with total passenger count. Here one more thing I want to add that as the covid-19 impact was not in a regular cycle so a model will not able to predict the actual 2020 passenger count, because of which the error will be high because the model was not able to identify the behavior of the data within this range and ultimately considered it as the outlier. so what I will do here I will predict for 2020 and will see how much impact in total it make due to covid-19.
+```
+
+ARIMA
+
+```{r}
+#As I am dealing with the months series so I need to create a dummy variable for 12 months. I will take 228 rows because my data points start from October so I will drop the first 9 rows from the month column. 
+
+Month <- data.frame(outer(rep(month.abb,length=228),month.abb,"==")+0)
+Month <- Month[10:228,]
+head(Month)
+
+#Assign Column names as month instead of variable name for better understanding.
+colnames(Month) <- month.abb
+head(Month)
+
+#Combine the passenger data with the month data. 
+Passenger_data3 <- data.frame(Passenger_data2[,c(6,5)],Month)
+head(Passenger_data3)
+
+#now i will build few columns into the passenger data to analyze the additive and multiplicative seasonality of my dataset.
+Passenger_data3["t"] <-1:219 #For linear impact. 
+Passenger_data3["t_squared"] <- Passenger_data3["t"]*Passenger_data3["t"] #For quadratic impact
+
+Passenger_data3["log_Passengers"] <- log(Passenger_data3["TOTAL"]) # for multiplicative impact
+
+train_set <- Passenger_data3[1:183,]
+test_set <- Passenger_data3[184:207,]
+
+
+# Model Based Forecasting Analysis  
+attach(train_set)
+
+# Multiplicative Seasonality 
+Multi_Season <- lm(log_Passengers ~ Jan+Feb+Mar+Apr+May+Jun+Jul+Aug+Sep+Oct+Nov+Dec,data = train_set)
+summary(Multi_Season)
+
+#Comput the model on test data set and predict the value 
+Multi_Season_pred <- data.frame(predict(Multi_Season,newdata = test_set,interval = "predict"))
+
+#As my prediction contains logrithmic function within it i need to transform it
+Multi_Season_pred1 <- exp(Multi_Season_pred$fit)
+
+#Calculate Mean Absolute Percentage Error
+mape(Multi_Season_pred1,test_set$TOTAL) #0.26
+
+############# Multiplicative Seasonality with linear data ###########
+Multi_Season_linear <- lm(log_Passengers~t+Jan+Feb+Mar+Apr+May+Jun+Jul+Aug+Sep+Oct+Nov+Dec,data = train_set)
+summary(Multi_Season_linear)
+
+#Comput the model on test data set and predict the value 
+Multi_Season_linear_pred <- data.frame(predict(Multi_Season_linear,newdata = test_set,interval = "predict"))
+
+#As my prediction contains logrithmic function within it we need to transform it
+Multi_Season_pred2 <- exp(Multi_Season_linear_pred$fit)
+
+
+#Calculate Mean Absolute Percentage Error
+mape(test_set$TOTAL,Multi_Season_pred2) #MAPE=0.09
+
+############## Additive Seasonality ################
+
+Add_season <- lm(TOTAL ~ Jan+Feb+Mar+Apr+May+Jun+Jul+Aug+Sep+Oct+Nov+Dec,data = train_set)
+summary(Add_season)
+
+#Comput the model on test data set and predict the value 
+Add_season_pred <- data.frame(predict(Add_season,newdata = test_set,interval = "predict"))
+
+#Calculate Mean Absolute Percentage Error
+mape(test_set$TOTAL,Add_season_pred$fit) #MAPE=0.20
+
+############## Additive Seasonality with linear model ################
+
+Add_season_linear <- lm(TOTAL~t+Jan+Feb+Mar+Apr+May+Jun+Jul+Aug+Sep+Oct+Nov+Dec,data = train_set)
+summary(Add_season_linear)
+
+#Comput the model on test data set and predict the value 
+Add_season_linear_pred <- data.frame(predict(Add_season_linear,newdata = test_set,interval = "predict"))
+
+#Calculate Mean Absolute Percentage Error
+mape(test_set$TOTAL,Add_season_linear_pred$fit) #MAPE=0.09
+
+
+# Additive Seasonality with quadratic model
+
+Add_season_quad <- lm(TOTAL ~ t_squared + Jan+Feb+Mar+Apr+May+Jun+Jul+Aug+Sep+Oct+Nov+Dec,data = train_set)
+summary(Add_season_quad)
+
+#Comput the model on test data set and predict the value 
+Add_season_quad_pred <- data.frame(predict(Add_season_quad,newdata = test_set,interval = "predict"))
+Add_season_quad_pred
+
+#Calculate Mean Absolute Percentage Error
+mape(test_set$TOTAL,Add_season_quad_pred$fit) #MAPE=0.05
+
+
+#As I got mape only 0.05%  in the case of additive seasonality with the quadratic model so I will forecast my 2020 passenger values based on this model for that I will build my final model by using his method 
+Final_model <- lm(TOTAL ~ t_squared + Jan+Feb+Mar+Apr+May+Jun+Jul+Aug+Sep+Oct+Nov+Dec,
+                  data = Passenger_data3[1:207,])
+summary(Final_model)
+
+#Comput the model on test data set and predict the value 
+Final_model_pred <- data.frame(predict(Final_model,newdata = Passenger_data3[207:219,],interval = "predict"))
+
+#As i got my final forecasted values now i need to calculate residual errors too
+
+resid <- Final_model$residuals
+acf(resid, lag.max = 12)
+
+#most of my error values are insignificant so i need to manage it
+resid_a <- auto.arima(resid)
+resid_a$residuals
+
+acf(resid_a$residuals, lag.max = 12)
+#i got the required values now we can forecast my next 12 months errors.
+
+errors <- forecast(resid_a, h = 12,level = c(95,99))
+
+future_errors <- data.frame(errors)
+
+future_errors <- future_errors$Point.Forecast
+
+# predicted values for new data + future error values 
+
+predicted_new_values <- Final_model_pred + future_errors
+
+#Transform the data set into time series
+new_data <- ts(predicted_new_values$fit,start = c(2020,1),frequency = 12)
+
+Passenger_ts <- ts(Passenger_data2$TOTAL,frequency = 12,start = c(2002,10))
+#visualization of foretasted data with the original data
+ts.plot(Passenger_ts,new_data,lty=c(1,3))
+#here I can see the difference between the predicted and actual is too high, and that's what I discuss earlier, that the model run based on the past trend and seasonality but if I compute the actual 2020 data it's not able to detect the pattern and will forecast in the negative trend.
+```
+
+Apart from passenger count, there are other factors too that impact due to covid-19 like share price of airlines, load capacity of flights, operating revenue, In my further analysis I use some plot to explain the covid-19 impact on these factors 
+
+```{r}
+#Seat Per miles data
+Seat_miles <- read_excel("ASM_3_19_2021.xlsx", skip = 1)
+head(Seat_miles)
+
+Seat_miles <- Seat_miles[-c(4,17,30,43,56,69,82,95,108,121,134,147,160,173,186,199,212,225,238:242),]
+
+
+Seat_miles$Date <- as.Date(paste(month.abb[as.numeric(Seat_miles$Month)], "01",
+                                     Seat_miles$Year, sep="-"),format = "%b-%d-%Y")
+
+#Transform the total data into time series.
+Seat_miles_ts <- ts(Seat_miles$TOTAL,frequency = 12,start = c(2002,10))
+Seat_miles_ts
+
+dygraph(Seat_miles_ts) %>%
+  dyOptions( drawPoints = TRUE, pointSize = 4 )
+
+```
+
+
+```{r}
+#Numbers of flight operating data
+Flights_Data <- read_excel("Flights_3_19_2021.xlsx", skip = 1)
+head(Flights_Data)
+
+Flights_Data <- Flights_Data[-c(4,17,30,43,56,69,82,95,108,121,134,147,160,173,186,199,212,225,238:242),]
+
+
+Flights_Data$Date <- as.Date(paste(month.abb[as.numeric(Flights_Data$Month)], "01",
+                                     Flights_Data$Year, sep="-"),format = "%b-%d-%Y")
+
+#Transform the total data into time series.
+Flights_Data_xts <- xts( x=Flights_Data[,-c(1,2,6,5)], order.by=Flights_Data$Date)
+
+
+dygraph(Flights_Data_xts)
+
+```
+
+
+```{r}
+RPM_Data <- read_excel("RPM_3_19_2021.xlsx", skip = 1)
+head(RPM_Data)
+
+RPM_Data <- RPM_Data[-c(4,17,30,43,56,69,82,95,108,121,134,147,160,173,186,199,212,225,238:242),]
+
+RPM_Data$Date <- as.Date(paste(month.abb[as.numeric(RPM_Data$Month)], "01",
+                                     RPM_Data$Year, sep="-"),format = "%b-%d-%Y")
+
+#Transform the total data into time series.
+rpm_Data_xts <- xts( x=RPM_Data[,-c(1,2,6,5)], order.by=RPM_Data$Date)
+
+ts_plot(rpm_Data_xts)
+
+```
+
+```{r}
+#revenue from different zone.
+Operating_Rev_Data <- read_excel("Operating_Rev_3_19_2021.xlsx",skip = 1)
+head(Operating_Rev_Data)
+str(Operating_Rev_Data)
+
+Operating_Rev_Data <- Operating_Rev_Data[-c(5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,
+                                          80,85,90,95,100,104:106),]
+
+Operating_Rev_Data$Quarter <- as.numeric(Operating_Rev_Data$Quarter)
+Operating_Rev_Data$Year <- as.numeric(Operating_Rev_Data$Year)
+
+attach(Operating_Rev_Data)
+
+Operating_Rev_Data_ts <- with(Operating_Rev_Data, xts(cbind(DOMESTIC,`LATIN AMERICA`,
+                                                          ATLANTIC,PACIFIC,INTERNATIONAL),
+                                                    as.yearqtr(Year + (Quarter-1)/4)))
+
+dygraph(Operating_Rev_Data_ts) %>%
+  dyOptions( fillGraph=TRUE )
+
+dygraph(Operating_Rev_Data_ts) %>%
+  dyOptions( stepPlot=TRUE, fillGraph=TRUE)
+
+dygraph(Operating_Rev_Data_ts) %>%
+  dyOptions(stemPlot=TRUE)
+
+
+ts_plot(Operating_Rev_Data_ts)
+```
+
+
+
+```{r}
+Operating_PL_Data <- read_excel("Operating_PL_3_19_2021.xlsx", skip = 1)
+head(Operating_PL_Data)
+str(Operating_PL_Data)
+
+Operating_PL_Data <- Operating_PL_Data[-c(5,10,15,20,25,30,35,40,45,50,55,60,65,70,75,
+                                          80,85,90,95,100,104:106),]
+
+Operating_PL_Data$Quarter <- as.numeric(Operating_PL_Data$Quarter)
+Operating_PL_Data$Year <- as.numeric(Operating_PL_Data$Year)
+
+attach(Operating_PL_Data)
+
+Operating_PL_Data_ts <- with(Operating_PL_Data, xts(cbind(DOMESTIC,`LATIN AMERICA`,
+                                                          ATLANTIC,PACIFIC,INTERNATIONAL),
+                                                    as.yearqtr(Year + (Quarter-1)/4)))
+
+ts_plot(Operating_PL_Data_ts)
+
+```
+
+
+
+```{r}
+#Share Price of top Airlines company. 
+United_Airlines <- read.csv("UAL.csv",header = TRUE)
+American_Airlines <- read.csv("AAL.csv",header = TRUE)
+Delta_Airlines <- read.csv("DAL.csv",header = TRUE)
+southwest_Airlines <- read.csv("LUV.csv",header = TRUE)
+Lufthansa_Airlines <- read.csv("LHA.DE.csv",header = TRUE)
+
+Airlines_Shares <- as.data.frame(cbind(United_Airlines[-133,1:2],southwest_Airlines[-133,2],
+                                       Delta_Airlines[-133,2],American_Airlines[-133,2],
+                                       Lufthansa_Airlines[,2]))
+
+head(Airlines_Shares)
+
+colnames(Airlines_Shares) <- c("Date","United_Airlines","Southwest_Airlines","Delta_Airlines",
+                               "American_Airlines","Lufthansa_Airlines")
+
+Airlines_Shares$Date <- as.Date(Airlines_Shares$Date)
+Shares_xts <- xts( x=Airlines_Shares[,-1], order.by=Airlines_Shares$Date)
+
+ts_plot(Shares_xts)
+```
+
